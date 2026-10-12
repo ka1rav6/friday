@@ -225,3 +225,6 @@ data/
 .secrets/
 frontend/node_modules/
 frontend/dist/
+
+# Built frontend (regenerate with `npm run build` in frontend/)
+frontend/dist/

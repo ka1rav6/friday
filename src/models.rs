@@ -115,6 +115,27 @@ impl OpenAiCompatible {
     }
 }
 
+impl OpenAiCompatible {
+    /// Actionable message for a provider we could not reach at all.
+    fn unreachable_hint(&self) -> String {
+        if self.label == "ollama" {
+            format!(
+                "cannot reach the local model server at {}. Either start it (`ollama serve`, then \
+                 `ollama pull {}`), or set NEBIUS_API_KEY in .env to use the hosted NVIDIA Nemotron \
+                 model through Nebius Token Factory.",
+                self.base_url.trim_end_matches("/v1"),
+                self.model
+            )
+        } else {
+            format!(
+                "cannot reach {} at {}. Check the network connection and that the base URL and API \
+                 key in .env are correct.",
+                self.label, self.base_url
+            )
+        }
+    }
+}
+
 #[async_trait]
 impl ModelProvider for OpenAiCompatible {
     fn name(&self) -> &str {
@@ -152,6 +173,12 @@ impl ModelProvider for OpenAiCompatible {
             }
             let resp = match rb.send().await {
                 Ok(r) => r,
+                Err(e) if e.is_connect() || e.is_timeout() => {
+                    // A transport failure is almost always a setup problem, so say
+                    // what to do about it rather than echoing the socket error.
+                    last_err = Some(anyhow::anyhow!("{}", self.unreachable_hint()));
+                    continue;
+                }
                 Err(e) => {
                     last_err = Some(anyhow::anyhow!("{}: request failed: {e}", self.label));
                     continue;

@@ -9,6 +9,7 @@ use axum::{Json, Router};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tower_http::cors::CorsLayer;
+use tower_http::services::{ServeDir, ServeFile};
 
 pub struct ApiError(anyhow::Error);
 impl IntoResponse for ApiError {
@@ -35,7 +36,7 @@ macro_rules! require {
 }
 
 pub fn router(state: AppState) -> Router {
-    Router::new()
+    let api = Router::new()
         .route("/api/health", get(health))
         .route("/api/status", get(status))
         .route("/api/tools", get(tools))
@@ -69,7 +70,30 @@ pub fn router(state: AppState) -> Router {
         .route("/api/audit", get(audit))
         .route("/api/events", get(events_ws))
         .layer(CorsLayer::permissive())
-        .with_state(state)
+        .with_state(state);
+
+    // Serve the built frontend from the same process when it is present, so a
+    // deployment is one binary. `index.html` is the fallback, because the UI is
+    // a single page with client-side tabs.
+    match static_dir() {
+        Some(dir) => {
+            tracing::info!(dir = %dir.display(), "serving the built frontend");
+            let index = dir.join("index.html");
+            api.fallback_service(ServeDir::new(dir).fallback(ServeFile::new(index)))
+        }
+        None => {
+            tracing::info!("no built frontend found; API only (run `npm run dev` in frontend/)");
+            api
+        }
+    }
+}
+
+/// `FRIDAY_STATIC`, else `frontend/dist` if it has been built.
+fn static_dir() -> Option<std::path::PathBuf> {
+    let candidate = std::env::var_os("FRIDAY_STATIC")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from("frontend/dist"));
+    candidate.join("index.html").is_file().then_some(candidate)
 }
 
 async fn health() -> ApiResult {
