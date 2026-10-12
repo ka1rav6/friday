@@ -22,6 +22,12 @@ pub mod state;
 pub mod tools;
 pub mod util;
 
+/// Loads `.env` so live tests and the CLI see the same credentials the server
+/// does. Safe to call more than once.
+pub fn load_env() {
+    dotenvy::dotenv().ok();
+}
+
 /// Builds an application state wired to the deterministic mock provider, for
 /// tests and offline inspection. It never contacts a hosted model.
 ///
