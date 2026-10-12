@@ -301,3 +301,114 @@ async fn spawn_subagent_reports_an_estimate_and_the_actual_cost() {
             .unwrap();
     assert!(kinds.iter().any(|k| k.0 == "subagent_fanout"));
 }
+
+// -------------------------------------------------------------- model tiering
+
+/// The Personal AI track encourages reaching for a larger model only where the
+/// reasoning is hard. These tests cover the resolution rules; the live
+/// behaviour is exercised in tests/nebius_live.rs.
+#[test]
+fn role_models_resolve_tier_then_override_then_default() {
+    use friday::agents::model_for_role;
+    use friday::config::{Config, ModelConfig};
+
+    // With nothing configured, every role gets the one default model.
+    let plain = Config::default();
+    for (role, _, _) in friday::agents::ROLES {
+        assert_eq!(model_for_role(&plain, role), plain.model.nebius_model);
+    }
+
+    let tiered = Config {
+        model: ModelConfig {
+            nebius_model: "default-model".into(),
+            reasoning_model: "big-model".into(),
+            fast_model: "small-model".into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    // Reasoning-heavy roles get the big model.
+    for role in ["generalist", "planner", "coder", "verifier"] {
+        assert_eq!(model_for_role(&tiered, role), "big-model", "{role}");
+    }
+    // Many-shallow-calls roles get the fast one.
+    for role in ["summarizer", "researcher", "memory", "briefing", "offline"] {
+        assert_eq!(model_for_role(&tiered, role), "small-model", "{role}");
+    }
+
+    // An explicit per-role entry beats the tier.
+    let mut overridden = tiered.clone();
+    overridden
+        .model
+        .role_models
+        .insert("summarizer".into(), "specific-model".into());
+    assert_eq!(model_for_role(&overridden, "summarizer"), "specific-model");
+    assert_eq!(model_for_role(&overridden, "planner"), "big-model");
+
+    // Only one tier configured: the other falls back to the default.
+    let half = Config {
+        model: ModelConfig {
+            nebius_model: "default-model".into(),
+            fast_model: "small-model".into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    assert_eq!(model_for_role(&half, "planner"), "default-model");
+    assert_eq!(model_for_role(&half, "summarizer"), "small-model");
+}
+
+#[test]
+fn an_unknown_role_in_role_models_is_rejected_by_configuration() {
+    let mut cfg = friday::config::Config::default();
+    cfg.model.role_models.insert("wizard".into(), "m".into());
+    let e = format!("{:#}", friday::config::validate(&cfg).unwrap_err());
+    assert!(e.contains("unknown role \"wizard\""), "{e}");
+    assert!(
+        e.contains("planner"),
+        "the error should list the valid roles: {e}"
+    );
+}
+
+#[tokio::test]
+async fn tiering_does_not_disturb_a_single_model_provider() {
+    // The mock serves exactly one model, so it returns None from with_model and
+    // the loop must carry on using it rather than failing to switch.
+    let (st, mock) = friday::test_state().await.unwrap();
+    {
+        let mut cfg = st.config.write().await;
+        cfg.model.reasoning_model = "big-model".into();
+        cfg.model.fast_model = "small-model".into();
+    }
+    mock.push(MockProvider::text("answered anyway"));
+    let out = friday::agents::handle_message(&st, "tier-1", "hello")
+        .await
+        .unwrap();
+    assert_eq!(out.status, "completed");
+    assert_eq!(
+        out.model, "mock",
+        "a single-model provider must be left alone"
+    );
+}
+
+#[tokio::test]
+async fn status_reports_the_model_each_role_would_use() {
+    let (st, _) = friday::test_state().await.unwrap();
+    {
+        let mut cfg = st.config.write().await;
+        cfg.model.nebius_model = "default-model".into();
+        cfg.model.reasoning_model = "big-model".into();
+        cfg.model.fast_model = "small-model".into();
+    }
+    let ctx = friday::tools::ToolCtx::root(st.clone(), None);
+    let out = friday::tools::execute(&ctx, "get_system_status", json!({})).await;
+    assert!(out.ok);
+    let by_role = out.value["model_by_role"].as_array().unwrap();
+    assert_eq!(by_role.len(), friday::agents::ROLES.len());
+    let planner = by_role.iter().find(|r| r["role"] == "planner").unwrap();
+    assert_eq!(planner["model"], json!("big-model"));
+    assert_eq!(planner["tier"], json!("reasoning"));
+    let summarizer = by_role.iter().find(|r| r["role"] == "summarizer").unwrap();
+    assert_eq!(summarizer["model"], json!("small-model"));
+    assert_eq!(summarizer["tier"], json!("fast"));
+}

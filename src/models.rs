@@ -138,6 +138,13 @@ pub trait ModelProvider: Send + Sync {
     fn supports_images(&self) -> bool {
         false
     }
+
+    /// The same provider pointed at a different model id, for per-role model
+    /// tiering. `None` means this provider serves exactly one model, which is
+    /// true of the mock and is why tests are unaffected by tiering.
+    fn with_model(&self, _model: &str) -> Option<Arc<dyn ModelProvider>> {
+        None
+    }
 }
 
 // ---------------------------------------------------------------- OpenAI-compatible
@@ -184,20 +191,6 @@ impl OpenAiCompatible {
     pub fn with_vision(mut self, vision: bool) -> Self {
         self.vision = vision;
         self
-    }
-
-    /// A clone of this provider pointed at a different model id, for the
-    /// vision model which is usually not the main reasoning model.
-    pub fn for_model(&self, model: &str) -> Self {
-        Self {
-            label: self.label.clone(),
-            base_url: self.base_url.clone(),
-            model: model.to_string(),
-            api_key: self.api_key.clone(),
-            http: self.http.clone(),
-            network: self.network,
-            vision: true,
-        }
     }
 }
 
@@ -304,6 +297,23 @@ impl ModelProvider for OpenAiCompatible {
 
     fn supports_images(&self) -> bool {
         self.vision
+    }
+
+    fn with_model(&self, model: &str) -> Option<Arc<dyn ModelProvider>> {
+        if model == self.model {
+            return None;
+        }
+        Some(Arc::new(Self {
+            label: self.label.clone(),
+            base_url: self.base_url.clone(),
+            model: model.to_string(),
+            api_key: self.api_key.clone(),
+            // A reqwest::Client is an Arc internally, so cloning it reuses the
+            // same connection pool rather than opening a second one.
+            http: self.http.clone(),
+            network: self.network,
+            vision: self.vision,
+        }))
     }
 
     async fn transcribe(&self, audio: Vec<u8>, filename: &str, model: &str) -> Result<String> {

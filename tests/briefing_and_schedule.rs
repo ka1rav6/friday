@@ -143,9 +143,15 @@ async fn gmail_is_implemented_but_refuses_until_it_is_connected() {
     assert!(e.contains("not connected"), "{e}");
 
     // No synthetic rows were quietly substituted for real mail.
-    let synthetic: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM inbox WHERE provider='synthetic'")
-        .fetch_one(&st.db).await.unwrap();
-    assert_eq!(synthetic, 0, "a failed real sync must not fall back to demo data");
+    let synthetic: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM inbox WHERE provider='synthetic'")
+            .fetch_one(&st.db)
+            .await
+            .unwrap();
+    assert_eq!(
+        synthetic, 0,
+        "a failed real sync must not fall back to demo data"
+    );
 
     // Status reports the posture without leaking any token material.
     let status = friday::gmail::status(&st).await;
@@ -155,7 +161,10 @@ async fn gmail_is_implemented_but_refuses_until_it_is_connected() {
     assert_eq!(status["capabilities"]["delete"], json!(false));
     assert_eq!(status["capabilities"]["modify"], json!(false));
     let text = status.to_string();
-    assert!(!text.contains("refresh_token"), "status leaked token material: {text}");
+    assert!(
+        !text.contains("refresh_token"),
+        "status leaked token material: {text}"
+    );
 }
 
 #[tokio::test]
@@ -164,7 +173,10 @@ async fn the_microsoft_connector_says_it_is_not_implemented() {
     st.config.write().await.briefing.email_provider = "microsoft".into();
     let e = format!("{:#}", briefing::sync(&st).await.unwrap_err());
     assert!(e.contains("not implemented"), "{e}");
-    assert!(e.contains("will not present synthetic data as real email"), "{e}");
+    assert!(
+        e.contains("will not present synthetic data as real email"),
+        "{e}"
+    );
 }
 
 #[tokio::test]

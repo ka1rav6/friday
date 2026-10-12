@@ -91,10 +91,18 @@ async fn get_system_status(ctx: &ToolCtx, _a: Value) -> Result<Value> {
                 .unwrap_or(-1)
         }
     };
+    let tiers: Vec<Value> = crate::agents::ROLES
+        .iter()
+        .map(|(role, _, _)| {
+            json!({"role": role, "model": crate::agents::model_for_role(&cfg, role),
+                   "tier": if crate::agents::REASONING_ROLES.contains(role) { "reasoning" } else { "fast" }})
+        })
+        .collect();
     Ok(json!({
         "mode": cfg.mode,
         "timezone": cfg.timezone,
         "now": now(),
+        "model_by_role": tiers,
         "selected_provider": route.as_ref().map(|r| r.1.provider.clone()),
         "selected_model": route.as_ref().map(|r| r.1.model.clone()),
         "routing_reason": route.as_ref().map(|r| r.1.reason.clone()),

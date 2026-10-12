@@ -333,14 +333,25 @@ async fn auth_cmd(state: &AppState, action: AuthAction) -> Result<()> {
                     "No stored Gmail token to delete."
                 }
             );
-            state.audit("user", "gmail", "forget_token", "token deleted by user", None).await;
+            state
+                .audit(
+                    "user",
+                    "gmail",
+                    "forget_token",
+                    "token deleted by user",
+                    None,
+                )
+                .await;
             Ok(())
         }
         AuthAction::Gmail { no_open, .. } => {
             let cfg = state.cfg().await;
             let auth = friday::gmail::begin(cfg.briefing.oauth_port).await?;
 
-            println!("FRIDAY is requesting READ-ONLY Gmail access ({}).", friday::gmail::SCOPE);
+            println!(
+                "FRIDAY is requesting READ-ONLY Gmail access ({}).",
+                friday::gmail::SCOPE
+            );
             println!("It cannot send, delete or modify mail with this scope.\n");
             println!("Open this URL and grant access:\n\n  {}\n", auth.url);
             if !no_open {
@@ -352,17 +363,28 @@ async fn auth_cmd(state: &AppState, action: AuthAction) -> Result<()> {
                     }
                 }
             }
-            println!("Waiting for the redirect on 127.0.0.1:{}…", cfg.briefing.oauth_port);
+            println!(
+                "Waiting for the redirect on 127.0.0.1:{}…",
+                cfg.briefing.oauth_port
+            );
 
-            let token = friday::gmail::complete(
-                auth,
-                &state.http,
-                std::time::Duration::from_secs(300),
-            )
-            .await?;
-            state.audit("user", "gmail", "connected", &format!("scope={}", token.scope), None).await;
+            let token =
+                friday::gmail::complete(auth, &state.http, std::time::Duration::from_secs(300))
+                    .await?;
+            state
+                .audit(
+                    "user",
+                    "gmail",
+                    "connected",
+                    &format!("scope={}", token.scope),
+                    None,
+                )
+                .await;
 
-            println!("\nConnected. Token stored in {}.", friday::gmail::token_path().display());
+            println!(
+                "\nConnected. Token stored in {}.",
+                friday::gmail::token_path().display()
+            );
             println!("Set briefing.email_provider = \"gmail\" to use it, then run `friday brief`.");
             Ok(())
         }

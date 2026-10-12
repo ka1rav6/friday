@@ -41,10 +41,17 @@ pub struct ClientCredentials {
 /// Reads the OAuth client from the environment. The error is the setup
 /// instruction, because a missing client is always a setup problem.
 pub fn client_credentials() -> Result<ClientCredentials> {
-    let id = std::env::var("GOOGLE_CLIENT_ID").ok().filter(|v| !v.trim().is_empty());
-    let secret = std::env::var("GOOGLE_CLIENT_SECRET").ok().filter(|v| !v.trim().is_empty());
+    let id = std::env::var("GOOGLE_CLIENT_ID")
+        .ok()
+        .filter(|v| !v.trim().is_empty());
+    let secret = std::env::var("GOOGLE_CLIENT_SECRET")
+        .ok()
+        .filter(|v| !v.trim().is_empty());
     match (id, secret) {
-        (Some(client_id), Some(client_secret)) => Ok(ClientCredentials { client_id, client_secret }),
+        (Some(client_id), Some(client_secret)) => Ok(ClientCredentials {
+            client_id,
+            client_secret,
+        }),
         _ => bail!(
             "Gmail is not configured. In the Google Cloud console: enable the Gmail API, create \
              an OAuth client of type \"Desktop app\", then put its values in .env as \
@@ -135,13 +142,18 @@ fn pkce() -> Pkce {
     for _ in 0..4 {
         seed.extend_from_slice(uuid::Uuid::new_v4().as_bytes());
     }
-    seed.extend_from_slice(&std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos().to_le_bytes())
-        .unwrap_or_default());
+    seed.extend_from_slice(
+        &std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos().to_le_bytes())
+            .unwrap_or_default(),
+    );
     let verifier = url_safe.encode(&seed);
     let challenge = url_safe.encode(Sha256::digest(verifier.as_bytes()));
-    Pkce { verifier, challenge }
+    Pkce {
+        verifier,
+        challenge,
+    }
 }
 
 // ------------------------------------------------------------------ the flow
@@ -184,7 +196,13 @@ pub async fn begin(port: u16) -> Result<Authorization> {
     )?
     .to_string();
 
-    Ok(Authorization { url, verifier: pkce.verifier, state, redirect_uri, listener })
+    Ok(Authorization {
+        url,
+        verifier: pkce.verifier,
+        state,
+        redirect_uri,
+        listener,
+    })
 }
 
 /// Waits for Google to redirect back, validates `state`, and exchanges the
@@ -218,8 +236,10 @@ pub async fn complete(
         // Browsers also ask for /favicon.ico; ignore anything with neither a
         // code nor an error.
         let parsed = url::Url::parse(&format!("http://127.0.0.1{target}"))?;
-        let params: std::collections::HashMap<String, String> =
-            parsed.query_pairs().map(|(k, v)| (k.into_owned(), v.into_owned())).collect();
+        let params: std::collections::HashMap<String, String> = parsed
+            .query_pairs()
+            .map(|(k, v)| (k.into_owned(), v.into_owned()))
+            .collect();
 
         if let Some(err) = params.get("error") {
             respond(&mut stream, "Authorization denied. You can close this tab.").await;
@@ -265,7 +285,10 @@ pub async fn complete(
     let status = resp.status();
     let text = resp.text().await.unwrap_or_default();
     if !status.is_success() {
-        bail!("token exchange failed with {status}: {}", truncate(&crate::util::redact(&text), 400));
+        bail!(
+            "token exchange failed with {status}: {}",
+            truncate(&crate::util::redact(&text), 400)
+        );
     }
     let v: Value = serde_json::from_str(&text)?;
     let refresh_token = v["refresh_token"]
@@ -359,14 +382,28 @@ pub async fn access_token(state: &AppState) -> Result<String> {
         );
     }
     if !status.is_success() {
-        bail!("token refresh failed with {status}: {}", truncate(&crate::util::redact(&text), 300));
+        bail!(
+            "token refresh failed with {status}: {}",
+            truncate(&crate::util::redact(&text), 300)
+        );
     }
     let v: Value = serde_json::from_str(&text)?;
     token.access_token = v["access_token"].as_str().unwrap_or_default().to_string();
     token.expires_at = expiry(v["expires_in"].as_i64().unwrap_or(0));
-    anyhow::ensure!(!token.access_token.is_empty(), "token refresh returned no access token");
+    anyhow::ensure!(
+        !token.access_token.is_empty(),
+        "token refresh returned no access token"
+    );
     save_token(&token)?;
-    state.audit("system", "gmail", "token_refresh", "access token renewed", None).await;
+    state
+        .audit(
+            "system",
+            "gmail",
+            "token_refresh",
+            "access token renewed",
+            None,
+        )
+        .await;
     Ok(token.access_token)
 }
 
@@ -409,7 +446,11 @@ pub async fn sync(state: &AppState) -> Result<Value> {
     let listed: Value = api_get(state, list_url.as_str(), &token).await?;
     let ids: Vec<String> = listed["messages"]
         .as_array()
-        .map(|a| a.iter().filter_map(|m| m["id"].as_str().map(str::to_string)).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(|m| m["id"].as_str().map(str::to_string))
+                .collect()
+        })
         .unwrap_or_default();
 
     let mut inserted = 0u64;
@@ -472,10 +513,12 @@ async fn api_get(state: &AppState, url: &str, token: &str) -> Result<Value> {
     let status = resp.status();
     let text = resp.text().await.unwrap_or_default();
     match status {
-        s if s.is_success() => Ok(serde_json::from_str(&text).context("Gmail returned invalid JSON")?),
-        reqwest::StatusCode::UNAUTHORIZED => bail!(
-            "Gmail rejected the access token. Run `friday auth gmail` to reconnect."
-        ),
+        s if s.is_success() => {
+            Ok(serde_json::from_str(&text).context("Gmail returned invalid JSON")?)
+        }
+        reqwest::StatusCode::UNAUTHORIZED => {
+            bail!("Gmail rejected the access token. Run `friday auth gmail` to reconnect.")
+        }
         reqwest::StatusCode::FORBIDDEN => bail!(
             "Gmail returned 403. Check that the Gmail API is enabled for this project and that \
              the consent included the {SCOPE} scope: {}",
@@ -484,7 +527,10 @@ async fn api_get(state: &AppState, url: &str, token: &str) -> Result<Value> {
         reqwest::StatusCode::TOO_MANY_REQUESTS => {
             bail!("Gmail rate limit reached; try the sync again shortly")
         }
-        s => bail!("Gmail returned {s}: {}", truncate(&crate::util::redact(&text), 300)),
+        s => bail!(
+            "Gmail returned {s}: {}",
+            truncate(&crate::util::redact(&text), 300)
+        ),
     }
 }
 
@@ -503,7 +549,9 @@ pub fn parse_message(msg: &Value) -> ParsedMessage {
             .and_then(|h| h.as_array())
             .and_then(|hs| {
                 hs.iter().find(|h| {
-                    h["name"].as_str().is_some_and(|n| n.eq_ignore_ascii_case(name))
+                    h["name"]
+                        .as_str()
+                        .is_some_and(|n| n.eq_ignore_ascii_case(name))
                 })
             })
             .and_then(|h| h["value"].as_str())
@@ -563,7 +611,9 @@ fn extract_body(part: &Value) -> String {
     if let Some(plain) = walk(part, "text/plain") {
         return plain;
     }
-    walk(part, "text/html").map(|h| crate::util::strip_html(&h)).unwrap_or_default()
+    walk(part, "text/html")
+        .map(|h| crate::util::strip_html(&h))
+        .unwrap_or_default()
 }
 
 /// Connection state for the UI and the CLI. Never returns token material.
@@ -595,8 +645,15 @@ mod tests {
     #[test]
     fn pkce_verifier_and_challenge_are_well_formed() {
         let p = pkce();
-        assert!((43..=128).contains(&p.verifier.len()), "verifier length {}", p.verifier.len());
-        assert!(p.verifier.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'));
+        assert!(
+            (43..=128).contains(&p.verifier.len()),
+            "verifier length {}",
+            p.verifier.len()
+        );
+        assert!(p
+            .verifier
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'));
         // The challenge is the base64url SHA-256 of the verifier, unpadded.
         let expected = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .encode(Sha256::digest(p.verifier.as_bytes()));

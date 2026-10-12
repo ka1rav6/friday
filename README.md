@@ -9,8 +9,10 @@ what it actually did.
 Built in Rust for the **Nebius × NVIDIA Global AI Hackathon 2026** (Personal AI),
 using the hosted **NVIDIA Nemotron** model through **Nebius Token Factory**.
 
-> **Status:** the backend is implemented and tested — 110 automated tests over
-> the real database, tool registry, agent loop and HTTP server. See
+> **Status:** backend, frontend, Gmail, voice and screen are implemented, with
+> 144 automated tests over the real database, tool registry, agent loop and
+> HTTP server. The live Nebius model call is the one thing still unverified —
+> it is waiting on an API key. See
 > [What is verified](#what-is-verified) for an honest line between tested
 > functionality and work in progress.
 
@@ -120,6 +122,8 @@ complete annotated default file.
 ```bash
 cargo run -- ask "what can you do offline right now?"
 cargo run -- brief                          # today's briefing from demo data
+cargo run -- media                          # which voice/screen backends exist here
+cargo run -- auth gmail                     # read-only Gmail (see docs/gmail.md)
 cargo run -- skills add examples/skills/daily-digest --scope project
 cargo run -- skills inspect examples/skills/daily-digest
 cargo run -- tools                          # the whole catalogue
@@ -184,11 +188,12 @@ before anything is logged; irreversible actions need a recorded human approval.
 | | |
 | --- | --- |
 | **Memory** | 5 categories, provenance + confidence, FTS search, propose-vs-save consent, dedup, conflict detection, export, deletion that clears the index |
-| **Agents** | Bounded loop, 8 specialist roles, budgets, cancellation, restart recovery, cost estimates vs actuals |
-| **Tools** | 69 implemented tools, 5 permission categories, per-call timeouts, output caps, full audit trail |
-| **Research** | Cited reports, freshness policies, offline packets, claim reconciliation, knowledge gaps |
-| **Briefing** | Mail + calendar + tasks + deadlines, source links, injection warnings, per-date idempotency |
+| **Agents** | Bounded loop, 8 specialist roles, per-role model tiering, budgets, cancellation, restart recovery, cost estimates vs actuals |
+| **Tools** | 75 implemented tools, 5 permission categories, per-call timeouts, output caps, full audit trail |
+| **Research** | Cited reports, freshness policies, offline packets, claim reconciliation, knowledge gaps — verified against the live Tavily API |
+| **Briefing** | Real read-only Gmail, or clearly-labelled demo data; calendar, tasks, deadlines, source links, injection warnings, per-date idempotency |
 | **Skills** | Portable `skill.toml` + `SKILL.md`, GUI/CLI/file-managed, inspect before enable, trace-to-draft generation |
+| **Voice & screen** | Screenshot, OCR or vision-model reading, microphone, transcription, speech — on Linux, macOS and Windows |
 | **Offline** | Capability reports, network-tool filtering, local model routing, honest refusals |
 | **Config** | Documented precedence, strict validation, source reporting, live reload |
 
@@ -200,7 +205,9 @@ before anything is logged; irreversible actions need a recorded human approval.
 | --- | --- |
 | **NVIDIA open model** | `nvidia/nemotron-3-super-120b-a12b` (configurable) |
 | **Nebius** | Nebius Token Factory, OpenAI-compatible `/chat/completions` with tool calling, at `https://api.tokenfactory.nebius.com/v1` |
-| **Meaningful use** | The model drives the agent loop: it plans, selects and parameterises tools from 69 schemas, synthesizes briefings and cited research reports, and acts as the specialist in every subagent role. It is not decoration — remove it and the application does nothing. |
+| **Meaningful use** | The model drives the agent loop: it plans, selects and parameterises tools from 75 schemas, synthesizes briefings and cited research reports, and acts as the specialist in every subagent role. It is not decoration — remove it and the application does nothing. |
+| **Model tiering** | Per-role selection, as the track encourages: `reasoning_model` for the generalist, planner, coder and verifier; `fast_model` for the summarizer, researcher, memory, briefing and offline roles. `friday status` shows which model each role would use. |
+| **Tavily** | Search provider for the research pipeline. Every claim is attributable to a URL, fetch timestamps are stored, a report cannot be saved with a fabricated or private-address citation, and saved research stays answerable offline. |
 | **Runtime** | `models::OpenAiCompatible` with bearer auth, retry with backoff on 429/5xx, timeouts, token-usage accounting, and per-request latency recorded in `agent_runs` |
 
 The hosted model is required for the demo path. A deterministic mock provider
@@ -209,7 +216,7 @@ as the NVIDIA model.
 
 ## What is verified
 
-**Tested by the automated suite** (110 tests, no network):
+**Tested by the automated suite** (144 tests, no network):
 
 - Memory survives a restart, is found by search, and reaches the model labelled
   as data; unapproved proposals are excluded until approved; deletion clears
@@ -227,20 +234,35 @@ as the NVIDIA model.
 - The full config precedence chain; a bad edit never replaces working settings.
 - The security boundary: traversal, SSRF, secret files, permission denial,
   approval gating, redaction, output caps, command allowlisting.
+- Voice and screen: privileged-by-default refusals, path confinement, the
+  local-vs-hosted decision, cross-platform backend tables, and that the
+  Windows scripts take every parameter from the environment.
+- Gmail: read-only scope, PKCE, MIME body extraction (plain text preferred,
+  HTML stripped, snippet fallback), and that a failed real sync never
+  substitutes demo data.
 
-**Implemented, exercised manually, not yet covered end to end:**
+**Verified against the live API:**
 
-- Live calls against Nebius Token Factory (the suite uses the mock by design;
-  `cargo run -- ask` with a real key is the manual check).
-- Tavily-backed `search_web` / `research_topic` against the live API.
+- Tavily `search_web` / `fetch_web_page` / `research_topic` — 4 search
+  results, 3 of 3 sources fetched, report persisted with 3 citations
+  (`cargo test --test tavily_live -- --ignored`).
+- Screen capture on this machine via `grim`, producing a real PNG.
+
+**Implemented, not yet verified against the live service:**
+
+- Nebius Token Factory calls. The suite uses a mock by design;
+  `tests/nebius_live.rs` holds six live checks (reachability, completion, tool
+  calling, the full agent loop, three concurrent specialists, and two-tier
+  model routing) and is waiting on an API key.
+- Hosted vision reading and hosted transcription — same key.
+- Gmail sync against a real mailbox — waiting on a Google OAuth client.
 - Ollama offline inference.
 
 **Not implemented** — and the code says so at run time rather than pretending:
 
-- Gmail / Microsoft Graph connectors (`briefing.email_provider` refuses them).
-- Voice (`transcribe_audio`, `speak_response`) and screen understanding
-  (`capture_screen`, `analyze_screen`).
-- The React frontend is in progress; the API and CLI are complete.
+- Microsoft Graph (`briefing.email_provider = "microsoft"` errors explicitly).
+- NVIDIA NemoClaw, OpenShell and Hermes Agent.
+- A deployed public demo.
 
 ## Documentation
 
@@ -249,8 +271,12 @@ as the NVIDIA model.
 - [Configuration](docs/configuration.md) — precedence, validation, every setting
 - [Skills](docs/skills.md) — package format and lifecycle
 - [Briefing & scheduling](docs/briefing.md) — connectors, deadlines, idempotency
+- [Gmail](docs/gmail.md) — the Google Cloud setup, step by step
+- [Voice & screen](docs/voice-and-screen.md) — platform matrix, local vs hosted
 - [HTTP API](docs/api.md) — endpoints and WebSocket events
+- [Deployment](docs/deployment.md) — local, public demo, Docker
 - [Tool catalogue](docs/tools.md) — generated from the live registry
+- [Hackathon requirements](docs/hackathon.md) — verified against Devpost
 
 ## Limitations
 
@@ -259,6 +285,9 @@ as the NVIDIA model.
 - Retrieval is FTS5 + LIKE, not embeddings. Fine at this corpus size.
 - Subagents cannot nest. This is a safety property, not a gap.
 - SQLite only.
+- Gmail tokens live in a `0600` file, not an OS keyring.
+- Offline OCR and offline transcription need a one-line install
+  (`tesseract-ocr`, whisper.cpp); `friday media` tells you exactly what and how.
 
 ## License
 

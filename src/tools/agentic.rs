@@ -64,7 +64,13 @@ async fn spawn_subagent(ctx: &ToolCtx, a: Value) -> Result<Value> {
         specs.len(),
         cfg.agents.hard_max_subagents
     );
-    let estimate = agents::estimate_cost(&cfg, specs.len());
+    let mut estimate = agents::estimate_cost(&cfg, specs.len());
+    estimate["models"] = Value::Array(
+        specs
+            .iter()
+            .map(|sp| json!({"role": sp.role, "model": agents::model_for_role(&cfg, &sp.role)}))
+            .collect(),
+    );
     let cancel = ctx
         .state
         .cancels

@@ -27,7 +27,18 @@ pub struct Config {
 pub struct ModelConfig {
     pub provider: String,
     pub nebius_base_url: String,
+    /// Default model, used by any role without a more specific choice.
     pub nebius_model: String,
+    /// Larger model for roles that do the hard thinking: the top-level agent,
+    /// the planner, the coder and the verifier. Empty means use `nebius_model`.
+    pub reasoning_model: String,
+    /// Faster, cheaper model for roles that make many shallow calls:
+    /// summarizer, researcher, memory, briefing, offline. Empty means use
+    /// `nebius_model`.
+    pub fast_model: String,
+    /// Explicit per-role overrides, which beat both tiers.
+    /// e.g. `role_models = { verifier = "nvidia/nemotron-3-ultra" }`
+    pub role_models: std::collections::BTreeMap<String, String>,
     pub ollama_base_url: String,
     pub ollama_model: String,
     pub max_tokens: u32,
@@ -168,6 +179,9 @@ impl Default for ModelConfig {
             provider: "nebius".into(),
             nebius_base_url: "https://api.tokenfactory.nebius.com/v1".into(),
             nebius_model: "nvidia/nemotron-3-super-120b-a12b".into(),
+            reasoning_model: String::new(),
+            fast_model: String::new(),
+            role_models: Default::default(),
             ollama_base_url: "http://127.0.0.1:11434".into(),
             ollama_model: "llama3.1".into(),
             max_tokens: 2048,
@@ -381,8 +395,22 @@ pub fn validate(c: &Config) -> Result<()> {
             c.briefing.at_time
         )
     })?;
+    for role in c.model.role_models.keys() {
+        anyhow::ensure!(
+            crate::agents::ROLES.iter().any(|r| r.0 == role),
+            "model.role_models has an unknown role {role:?}; valid roles are [{}]",
+            crate::agents::ROLES
+                .iter()
+                .map(|r| r.0)
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
     anyhow::ensure!(
-        matches!(c.briefing.email_provider.as_str(), "synthetic" | "gmail" | "microsoft"),
+        matches!(
+            c.briefing.email_provider.as_str(),
+            "synthetic" | "gmail" | "microsoft"
+        ),
         "briefing.email_provider: expected synthetic|gmail|microsoft, got {:?}",
         c.briefing.email_provider
     );

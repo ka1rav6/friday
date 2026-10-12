@@ -286,3 +286,91 @@ async fn three_specialists_run_concurrently_on_the_hosted_model() {
         "a subagent returned no content"
     );
 }
+
+/// Model tiering end to end: a planner and a summarizer subagent must report
+/// different models when two tiers are configured. This is the behaviour the
+/// Personal AI track asks for — reach for the bigger model only where the
+/// reasoning is hard.
+#[tokio::test]
+#[ignore = "makes real Nebius Token Factory calls on two models"]
+async fn per_role_tiering_reaches_two_different_models() {
+    if provider().is_none() {
+        eprintln!("skipping: NEBIUS_API_KEY is not set");
+        return;
+    }
+    let reasoning = std::env::var("NEBIUS_REASONING_MODEL").ok();
+    let fast = std::env::var("NEBIUS_FAST_MODEL").ok();
+    let (Some(reasoning), Some(fast)) = (reasoning, fast) else {
+        eprintln!(
+            "skipping: set NEBIUS_REASONING_MODEL and NEBIUS_FAST_MODEL to two model ids your \
+             account can serve"
+        );
+        return;
+    };
+
+    let (st, _mock) = friday::test_state().await.unwrap();
+    {
+        let mut cfg = st.config.write().await;
+        cfg.mode = "online".into();
+        cfg.model.reasoning_model = reasoning.clone();
+        cfg.model.fast_model = fast.clone();
+    }
+    *st.router.write().await = std::sync::Arc::new(friday::models::Router {
+        hosted: Some(std::sync::Arc::new(provider().unwrap())),
+        ..Default::default()
+    });
+    sqlx::query(
+        "INSERT INTO tasks (id,title,description,kind,status,created_at,updated_at)
+         VALUES ('tier-parent','parent','','user','running',?,?)",
+    )
+    .bind(friday::util::now())
+    .bind(friday::util::now())
+    .execute(&st.db)
+    .await
+    .unwrap();
+
+    let spec = |role: &str, objective: &str| friday::agents::SubagentSpec {
+        role: role.into(),
+        objective: objective.into(),
+        allowed_tools: vec![],
+        output_schema: None,
+        time_budget_secs: Some(90),
+    };
+    let results = friday::agents::fan_out(
+        &st,
+        "tier-parent",
+        vec![
+            spec(
+                "planner",
+                "List at most three steps to add request logging to a Rust service.",
+            ),
+            spec(
+                "summarizer",
+                "In one sentence, say what a semaphore is for.",
+            ),
+        ],
+        None,
+        tokio_util::sync::CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+    assert!(
+        results.iter().all(|r| r["status"] == json!("completed")),
+        "{results:?}"
+    );
+
+    // The recorded model per run is the proof the swap happened.
+    let rows: Vec<(String, Option<String>)> =
+        sqlx::query_as("SELECT role, model FROM agent_runs WHERE parent_task_id='tier-parent'")
+            .fetch_all(&st.db)
+            .await
+            .unwrap();
+    for (role, model) in &rows {
+        eprintln!("{role} ran on {model:?}");
+    }
+    let planner = rows.iter().find(|(r, _)| r == "planner").unwrap();
+    let summarizer = rows.iter().find(|(r, _)| r == "summarizer").unwrap();
+    assert_eq!(planner.1.as_deref(), Some(reasoning.as_str()));
+    assert_eq!(summarizer.1.as_deref(), Some(fast.as_str()));
+    assert_ne!(planner.1, summarizer.1, "tiering did not reach two models");
+}

@@ -13,6 +13,12 @@ use serde_json::{json, Value};
 use std::collections::HashSet;
 use tokio_util::sync::CancellationToken;
 
+/// Roles whose work is reasoning-heavy, and which therefore get
+/// `model.reasoning_model` when one is configured. Everything else is a
+/// many-shallow-calls role and gets `model.fast_model`.
+pub const REASONING_ROLES: &[&str] = &["generalist", "planner", "coder", "verifier"];
+
+/// `(name, system prompt, default tool grant)`.
 pub const ROLES: &[(&str, &str, &[&str])] = &[
     ("generalist", "You are FRIDAY, a personal AI operating system. Handle the user's request end to end.",
      &[]),
@@ -33,6 +39,27 @@ pub const ROLES: &[(&str, &str, &[&str])] = &[
     ("offline", "You are an offline specialist. Answer only from stored knowledge and local tools, and state plainly what needs a live connection.",
      &["search_knowledge", "get_research_report", "search_local_files", "read_local_file", "offline_capability_report"]),
 ];
+
+/// Picks the model for a role: an explicit `role_models` entry beats the tier,
+/// the tier beats the default. Returns the default when nothing is configured,
+/// so tiering is opt-in and a single-model setup behaves exactly as before.
+pub fn model_for_role(cfg: &crate::config::Config, role: &str) -> String {
+    if let Some(explicit) = cfg.model.role_models.get(role) {
+        if !explicit.is_empty() {
+            return explicit.clone();
+        }
+    }
+    let tiered = if REASONING_ROLES.contains(&role) {
+        &cfg.model.reasoning_model
+    } else {
+        &cfg.model.fast_model
+    };
+    if tiered.is_empty() {
+        cfg.model.nebius_model.clone()
+    } else {
+        tiered.clone()
+    }
+}
 
 pub fn role_prompt(role: &str) -> &'static str {
     ROLES
@@ -107,7 +134,20 @@ pub struct AgentOutcome {
 pub async fn run(state: &AppState, opts: RunOpts) -> Result<AgentOutcome> {
     let cfg = state.cfg().await;
     let run_id = uid();
-    let (provider, route) = state.router.read().await.select(&cfg.mode)?;
+    let (mut provider, mut route) = state.router.read().await.select(&cfg.mode)?;
+
+    // Per-role model tiering: a planner can think on a larger model while
+    // summarizer subagents make their many shallow calls on a faster one.
+    // Providers that serve a single model (the mock, Ollama's configured
+    // model) return None here and are left alone.
+    let wanted = model_for_role(&cfg, &opts.role);
+    if wanted != provider.model_id() {
+        if let Some(tiered) = provider.with_model(&wanted) {
+            route.model = tiered.model_id().to_string();
+            route.reason = format!("{} · model chosen for the {} role", route.reason, opts.role);
+            provider = tiered;
+        }
+    }
 
     sqlx::query(
         "INSERT INTO agent_runs (id,task_id,parent_task_id,role,objective,allowed_tools,status,model,started_at)

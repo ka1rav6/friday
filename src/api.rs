@@ -65,7 +65,10 @@ pub fn router(state: AppState) -> Router {
         .route("/api/jobs", get(jobs))
         .route("/api/jobs/:name/run", post(run_job))
         .route("/api/briefing", get(briefing))
-        .route("/api/accounts/gmail", get(gmail_status).delete(gmail_forget))
+        .route(
+            "/api/accounts/gmail",
+            get(gmail_status).delete(gmail_forget),
+        )
         .route("/api/accounts/gmail/sync", post(gmail_sync))
         .route("/api/approvals", get(approvals))
         .route("/api/approvals/:id/decide", post(decide_approval))
@@ -580,7 +583,14 @@ async fn gmail_status(State(st): State<AppState>) -> ApiResult {
 
 async fn gmail_forget(State(st): State<AppState>) -> ApiResult {
     let removed = crate::gmail::forget_token()?;
-    st.audit("user", "gmail", "forget_token", "token deleted via API", None).await;
+    st.audit(
+        "user",
+        "gmail",
+        "forget_token",
+        "token deleted via API",
+        None,
+    )
+    .await;
     Ok(Json(json!({
         "disconnected": removed,
         "next_step": "Revoke FRIDAY at https://myaccount.google.com/permissions to invalidate the \
