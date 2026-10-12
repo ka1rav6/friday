@@ -13,6 +13,8 @@ pub mod briefing;
 pub mod config;
 pub mod db;
 pub mod evidence;
+pub mod gmail;
+pub mod media;
 pub mod memory;
 pub mod models;
 pub mod research;
@@ -52,9 +54,8 @@ pub async fn test_state_at(
     let st = state::AppState::new(db, loaded);
     let mock = Arc::new(models::MockProvider::new());
     *st.router.write().await = Arc::new(models::Router {
-        hosted: None,
-        local: None,
         mock: mock.clone() as Arc<dyn models::ModelProvider>,
+        ..Default::default()
     });
     // `Router.mock` is type-erased; hand the concrete handle back for scripting.
     Ok((st, mock))

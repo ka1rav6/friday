@@ -3,7 +3,7 @@
 //!
 //! Control flow is deterministic Rust. The model proposes tool calls; the
 //! runtime validates, permission-checks and bounds every one of them.
-use crate::models::{ModelRequest, Msg};
+use crate::models::{Content, ModelRequest, Msg};
 use crate::state::{AppState, Event};
 use crate::tools::{self, ToolCtx};
 use crate::util::{now, truncate, uid};
@@ -240,7 +240,7 @@ pub async fn run(state: &AppState, opts: RunOpts) -> Result<AgentOutcome> {
         // Record the assistant turn verbatim so tool_call_id pairing stays valid.
         messages.push(Msg {
             role: "assistant".into(),
-            content: resp.content.clone(),
+            content: Content::Text(resp.content.clone()),
             tool_calls: resp.raw_assistant.get("tool_calls").cloned(),
             tool_call_id: None,
         });

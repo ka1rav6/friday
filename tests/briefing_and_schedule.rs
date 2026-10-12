@@ -132,12 +132,52 @@ async fn the_briefing_job_runs_end_to_end_and_is_idempotent_per_day() {
 }
 
 #[tokio::test]
-async fn a_live_mail_connector_is_not_faked() {
+async fn gmail_is_implemented_but_refuses_until_it_is_connected() {
     let (st, _) = friday::test_state().await.unwrap();
     st.config.write().await.briefing.email_provider = "gmail".into();
+
+    // Gmail is a real connector now, so the failure is about authorization,
+    // not about the feature being missing.
+    let e = format!("{:#}", briefing::sync(&st).await.unwrap_err());
+    assert!(e.contains("friday auth gmail"), "{e}");
+    assert!(e.contains("not connected"), "{e}");
+
+    // No synthetic rows were quietly substituted for real mail.
+    let synthetic: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM inbox WHERE provider='synthetic'")
+        .fetch_one(&st.db).await.unwrap();
+    assert_eq!(synthetic, 0, "a failed real sync must not fall back to demo data");
+
+    // Status reports the posture without leaking any token material.
+    let status = friday::gmail::status(&st).await;
+    assert_eq!(status["connected"], json!(false));
+    assert_eq!(status["capabilities"]["read"], json!(true));
+    assert_eq!(status["capabilities"]["send"], json!(false));
+    assert_eq!(status["capabilities"]["delete"], json!(false));
+    assert_eq!(status["capabilities"]["modify"], json!(false));
+    let text = status.to_string();
+    assert!(!text.contains("refresh_token"), "status leaked token material: {text}");
+}
+
+#[tokio::test]
+async fn the_microsoft_connector_says_it_is_not_implemented() {
+    let (st, _) = friday::test_state().await.unwrap();
+    st.config.write().await.briefing.email_provider = "microsoft".into();
     let e = format!("{:#}", briefing::sync(&st).await.unwrap_err());
     assert!(e.contains("not implemented"), "{e}");
-    assert!(e.contains("will not present synthetic data as real email"));
+    assert!(e.contains("will not present synthetic data as real email"), "{e}");
+}
+
+#[tokio::test]
+async fn an_unknown_mail_provider_is_rejected_by_configuration() {
+    let bad = friday::config::Config {
+        briefing: friday::config::BriefingConfig {
+            email_provider: "carrier-pigeon".into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let e = format!("{:#}", friday::config::validate(&bad).unwrap_err());
+    assert!(e.contains("synthetic|gmail|microsoft"), "{e}");
 }
 
 #[tokio::test]

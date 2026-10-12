@@ -15,11 +15,11 @@ pub async fn sync(state: &AppState) -> Result<Value> {
     let cfg = state.cfg().await;
     match cfg.briefing.email_provider.as_str() {
         "synthetic" => seed_synthetic(state).await,
-        "gmail" | "microsoft" => anyhow::bail!(
-            "the {} connector is not implemented in this build. Set briefing.email_provider = \"synthetic\" \
-             to run the briefing on clearly-labelled demo data, or implement the OAuth connector first. \
-             FRIDAY will not present synthetic data as real email.",
-            cfg.briefing.email_provider
+        "gmail" => crate::gmail::sync(state).await,
+        "microsoft" => anyhow::bail!(
+            "the Microsoft Graph connector is not implemented. Use briefing.email_provider = \"gmail\" \
+             for real mail, or \"synthetic\" for clearly-labelled demo data. FRIDAY will not present \
+             synthetic data as real email."
         ),
         other => anyhow::bail!("unknown briefing.email_provider {other:?}"),
     }

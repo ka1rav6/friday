@@ -19,6 +19,7 @@ pub struct Config {
     pub skills: SkillConfig,
     pub briefing: BriefingConfig,
     pub research: ResearchConfig,
+    pub media: MediaConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -84,9 +85,55 @@ pub struct SkillConfig {
 pub struct BriefingConfig {
     pub enabled: bool,
     pub at_time: String,
-    /// `synthetic` until a real OAuth connector is configured.
+    /// `synthetic` or `gmail`. `microsoft` is not implemented.
     pub email_provider: String,
     pub calendar_provider: String,
+    /// Loopback port used for the Google OAuth redirect.
+    pub oauth_port: u16,
+    /// Extra Gmail search terms appended to the incremental `after:` filter,
+    /// e.g. `-category:promotions`.
+    pub gmail_query: String,
+    /// Restrict the sync to these label ids, e.g. `["INBOX"]`.
+    pub gmail_labels: Vec<String>,
+    pub gmail_max_messages: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct MediaConfig {
+    /// Where screenshots and recordings are written.
+    pub capture_dir: PathBuf,
+    /// Vision-capable model id. Empty falls back to `model.nebius_model`,
+    /// which only works if that model accepts images.
+    pub vision_model: String,
+    /// Hosted speech-to-text model id, used against `/audio/transcriptions`.
+    pub transcribe_model: String,
+    /// Path to a whisper.cpp GGML model, enabling offline transcription.
+    pub stt_model: String,
+    /// Voice argument passed to the speech synthesizer, when it takes one.
+    pub tts_voice: String,
+    /// Prefer local OCR and local speech recognition over the hosted model,
+    /// even when a hosted credential is available.
+    pub prefer_local: bool,
+    /// Refuse to send a capture larger than this to a hosted model.
+    pub max_capture_bytes: u64,
+    /// Seconds of audio `record_audio` will capture at most.
+    pub max_record_secs: u32,
+}
+
+impl Default for MediaConfig {
+    fn default() -> Self {
+        Self {
+            capture_dir: PathBuf::from("data/captures"),
+            vision_model: String::new(),
+            transcribe_model: "whisper-large-v3".into(),
+            stt_model: String::new(),
+            tts_voice: String::new(),
+            prefer_local: false,
+            max_capture_bytes: 6 * 1024 * 1024,
+            max_record_secs: 120,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -111,6 +158,7 @@ impl Default for Config {
             skills: SkillConfig::default(),
             briefing: BriefingConfig::default(),
             research: ResearchConfig::default(),
+            media: MediaConfig::default(),
         }
     }
 }
@@ -172,6 +220,10 @@ impl Default for BriefingConfig {
             at_time: "07:30".into(),
             email_provider: "synthetic".into(),
             calendar_provider: "synthetic".into(),
+            oauth_port: 8788,
+            gmail_query: "-category:promotions -category:social".into(),
+            gmail_labels: vec!["INBOX".into()],
+            gmail_max_messages: 25,
         }
     }
 }
@@ -329,6 +381,21 @@ pub fn validate(c: &Config) -> Result<()> {
             c.briefing.at_time
         )
     })?;
+    anyhow::ensure!(
+        matches!(c.briefing.email_provider.as_str(), "synthetic" | "gmail" | "microsoft"),
+        "briefing.email_provider: expected synthetic|gmail|microsoft, got {:?}",
+        c.briefing.email_provider
+    );
+    anyhow::ensure!(
+        c.briefing.gmail_max_messages >= 1 && c.briefing.gmail_max_messages <= 200,
+        "briefing.gmail_max_messages must be between 1 and 200, got {}",
+        c.briefing.gmail_max_messages
+    );
+    anyhow::ensure!(
+        c.media.max_record_secs >= 1 && c.media.max_record_secs <= 600,
+        "media.max_record_secs must be between 1 and 600, got {}",
+        c.media.max_record_secs
+    );
     for w in &c.workspaces {
         anyhow::ensure!(!w.id.is_empty(), "workspaces[].id must not be empty");
     }

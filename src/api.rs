@@ -65,6 +65,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/jobs", get(jobs))
         .route("/api/jobs/:name/run", post(run_job))
         .route("/api/briefing", get(briefing))
+        .route("/api/accounts/gmail", get(gmail_status).delete(gmail_forget))
+        .route("/api/accounts/gmail/sync", post(gmail_sync))
         .route("/api/approvals", get(approvals))
         .route("/api/approvals/:id/decide", post(decide_approval))
         .route("/api/audit", get(audit))
@@ -560,6 +562,34 @@ async fn briefing(State(st): State<AppState>, Query(q): Query<DateQuery>) -> Api
             "note": "no briefing saved yet; POST /api/jobs/morning-briefing/run to generate one"
         }))),
     }
+}
+
+// ------------------------------------------------------------------ accounts
+
+/// Connection state only. The OAuth flow itself is deliberately CLI-only:
+/// it needs a loopback listener and a browser, and running it from a request
+/// handler would let a page trigger a consent prompt.
+async fn gmail_status(State(st): State<AppState>) -> ApiResult {
+    let mut v = crate::gmail::status(&st).await;
+    v["note"] = json!(
+        "Connect with `friday auth gmail` in a terminal. The consent flow is not exposed over \
+         HTTP on purpose."
+    );
+    Ok(Json(v))
+}
+
+async fn gmail_forget(State(st): State<AppState>) -> ApiResult {
+    let removed = crate::gmail::forget_token()?;
+    st.audit("user", "gmail", "forget_token", "token deleted via API", None).await;
+    Ok(Json(json!({
+        "disconnected": removed,
+        "next_step": "Revoke FRIDAY at https://myaccount.google.com/permissions to invalidate the \
+                      grant on Google's side as well."
+    })))
+}
+
+async fn gmail_sync(State(st): State<AppState>) -> ApiResult {
+    Ok(Json(crate::gmail::sync(&st).await?))
 }
 
 // ------------------------------------------------------------------ approvals / audit

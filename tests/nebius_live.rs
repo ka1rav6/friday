@@ -162,8 +162,7 @@ async fn the_hosted_model_drives_the_real_agent_loop() {
     st.config.write().await.mode = "online".into();
     *st.router.write().await = std::sync::Arc::new(friday::models::Router {
         hosted: Some(std::sync::Arc::new(provider().unwrap())),
-        local: None,
-        mock: std::sync::Arc::new(friday::models::MockProvider::new()),
+        ..Default::default()
     });
 
     let out = friday::agents::handle_message(
@@ -227,8 +226,7 @@ async fn three_specialists_run_concurrently_on_the_hosted_model() {
     st.config.write().await.mode = "online".into();
     *st.router.write().await = std::sync::Arc::new(friday::models::Router {
         hosted: Some(std::sync::Arc::new(provider().unwrap())),
-        local: None,
-        mock: std::sync::Arc::new(friday::models::MockProvider::new()),
+        ..Default::default()
     });
     sqlx::query(
         "INSERT INTO tasks (id,title,description,kind,status,created_at,updated_at)

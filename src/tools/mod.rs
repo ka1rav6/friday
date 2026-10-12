@@ -14,6 +14,7 @@ pub mod agentic;
 pub mod core;
 pub mod dev;
 pub mod personal;
+pub mod sensors;
 pub mod web;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -139,6 +140,9 @@ pub fn registry() -> ToolRegistry {
         insert(&mut m, t);
     }
     for t in personal::tools() {
+        insert(&mut m, t);
+    }
+    for t in sensors::tools() {
         insert(&mut m, t);
     }
     ToolRegistry { tools: m }

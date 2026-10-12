@@ -7,10 +7,33 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Duration;
 
+/// A message body. Plain text for ordinary turns; `Parts` carries the
+/// OpenAI-style content array used for image and audio input.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Content {
+    Text(String),
+    Parts(Vec<Value>),
+}
+
+impl Content {
+    /// The text of a message, ignoring any attached media.
+    pub fn as_text(&self) -> String {
+        match self {
+            Content::Text(t) => t.clone(),
+            Content::Parts(p) => p
+                .iter()
+                .filter_map(|x| x.get("text").and_then(|t| t.as_str()))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Msg {
     pub role: String,
-    pub content: String,
+    pub content: Content,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -21,7 +44,7 @@ impl Msg {
     pub fn new(role: &str, content: impl Into<String>) -> Self {
         Self {
             role: role.into(),
-            content: content.into(),
+            content: Content::Text(content.into()),
             tool_calls: None,
             tool_call_id: None,
         }
@@ -29,9 +52,34 @@ impl Msg {
     pub fn tool_result(id: &str, content: impl Into<String>) -> Self {
         Self {
             role: "tool".into(),
-            content: content.into(),
+            content: Content::Text(content.into()),
             tool_calls: None,
             tool_call_id: Some(id.into()),
+        }
+    }
+    /// A user turn carrying an image alongside the prompt, for vision models.
+    pub fn with_image(prompt: &str, data_uri: &str) -> Self {
+        Self {
+            role: "user".into(),
+            content: Content::Parts(vec![
+                json!({"type": "text", "text": prompt}),
+                json!({"type": "image_url", "image_url": {"url": data_uri}}),
+            ]),
+            tool_calls: None,
+            tool_call_id: None,
+        }
+    }
+    /// A user turn carrying audio, for models that accept it directly.
+    pub fn with_audio(prompt: &str, base64_audio: &str, format: &str) -> Self {
+        Self {
+            role: "user".into(),
+            content: Content::Parts(vec![
+                json!({"type": "text", "text": prompt}),
+                json!({"type": "input_audio",
+                       "input_audio": {"data": base64_audio, "format": format}}),
+            ]),
+            tool_calls: None,
+            tool_call_id: None,
         }
     }
 }
@@ -77,6 +125,19 @@ pub trait ModelProvider: Send + Sync {
     fn requires_network(&self) -> bool;
     async fn generate(&self, request: ModelRequest) -> Result<ModelResponse>;
     async fn healthy(&self) -> bool;
+
+    /// Transcribes audio through the provider's speech-to-text endpoint.
+    /// The default refuses rather than pretending: a provider that has no such
+    /// endpoint should not silently return an empty transcript.
+    async fn transcribe(&self, _audio: Vec<u8>, _filename: &str, _model: &str) -> Result<String> {
+        bail!("provider {} has no speech-to-text endpoint", self.name())
+    }
+
+    /// Whether `generate` may be given a message containing image parts.
+    /// Reported, not assumed - a text-only model will error on an image.
+    fn supports_images(&self) -> bool {
+        false
+    }
 }
 
 // ---------------------------------------------------------------- OpenAI-compatible
@@ -90,6 +151,8 @@ pub struct OpenAiCompatible {
     pub api_key: Option<String>,
     pub http: reqwest::Client,
     pub network: bool,
+    /// Set when the configured model is known to accept image parts.
+    pub vision: bool,
 }
 
 impl OpenAiCompatible {
@@ -111,7 +174,30 @@ impl OpenAiCompatible {
                 .build()
                 .context("build http client")?,
             network,
+            vision: false,
         })
+    }
+
+    /// Marks this provider as able to take image parts. Set from
+    /// `media.vision_model`, so the user declares it rather than FRIDAY
+    /// guessing from a model name.
+    pub fn with_vision(mut self, vision: bool) -> Self {
+        self.vision = vision;
+        self
+    }
+
+    /// A clone of this provider pointed at a different model id, for the
+    /// vision model which is usually not the main reasoning model.
+    pub fn for_model(&self, model: &str) -> Self {
+        Self {
+            label: self.label.clone(),
+            base_url: self.base_url.clone(),
+            model: model.to_string(),
+            api_key: self.api_key.clone(),
+            http: self.http.clone(),
+            network: self.network,
+            vision: true,
+        }
     }
 }
 
@@ -214,6 +300,57 @@ impl ModelProvider for OpenAiCompatible {
             rb = rb.bearer_auth(k);
         }
         matches!(rb.send().await, Ok(r) if r.status().is_success())
+    }
+
+    fn supports_images(&self) -> bool {
+        self.vision
+    }
+
+    async fn transcribe(&self, audio: Vec<u8>, filename: &str, model: &str) -> Result<String> {
+        let part = reqwest::multipart::Part::bytes(audio)
+            .file_name(filename.to_string())
+            .mime_str(crate::media::mime_for(std::path::Path::new(filename)))
+            .context("audio part")?;
+        let form = reqwest::multipart::Form::new()
+            .text("model", model.to_string())
+            .text("response_format", "json")
+            .part("file", part);
+
+        let url = format!("{}/audio/transcriptions", self.base_url);
+        let mut rb = self.http.post(&url).multipart(form);
+        if let Some(k) = &self.api_key {
+            rb = rb.bearer_auth(k);
+        }
+        let resp = rb.send().await.map_err(|e| {
+            if e.is_connect() || e.is_timeout() {
+                anyhow::anyhow!("{}", self.unreachable_hint())
+            } else {
+                anyhow::anyhow!("{}: transcription request failed: {e}", self.label)
+            }
+        })?;
+        let status = resp.status();
+        let text = resp.text().await.unwrap_or_default();
+        if status == reqwest::StatusCode::NOT_FOUND {
+            bail!(
+                "{} has no /audio/transcriptions endpoint, or model {model:?} is not available \
+                 there. Set media.stt_model to a local whisper.cpp model for offline \
+                 transcription instead.",
+                self.label
+            );
+        }
+        if !status.is_success() {
+            bail!(
+                "{}: transcription returned {status}: {}",
+                self.label,
+                crate::util::truncate(&crate::util::redact(&text), 400)
+            );
+        }
+        let v: Value =
+            serde_json::from_str(&text).context("transcription response was not JSON")?;
+        v.get("text")
+            .and_then(|t| t.as_str())
+            .map(str::to_string)
+            .ok_or_else(|| anyhow::anyhow!("transcription response had no `text` field"))
     }
 }
 
@@ -357,7 +494,23 @@ impl ModelProvider for MockProvider {
 pub struct Router {
     pub hosted: Option<Arc<dyn ModelProvider>>,
     pub local: Option<Arc<dyn ModelProvider>>,
+    /// Separate provider for the vision model, which is rarely the same model
+    /// as the main reasoning one. `None` means no vision model is configured.
+    pub vision: Option<Arc<dyn ModelProvider>>,
     pub mock: Arc<dyn ModelProvider>,
+}
+
+impl Default for Router {
+    /// A router with no real provider, so tests and the no-credential path get
+    /// the mock rather than a surprise network call.
+    fn default() -> Self {
+        Self {
+            hosted: None,
+            local: None,
+            vision: None,
+            mock: Arc::new(MockProvider::new()),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -447,9 +600,31 @@ pub fn build_router(cfg: &crate::config::Config) -> Router {
     )
     .ok()
     .map(|p| Arc::new(p) as Arc<dyn ModelProvider>);
+    // The vision provider needs a credential, so it exists only alongside a
+    // hosted one, and only when the user actually named a vision model.
+    let vision = if cfg.media.vision_model.is_empty() {
+        None
+    } else {
+        std::env::var("NEBIUS_API_KEY")
+            .ok()
+            .filter(|k| !k.trim().is_empty())
+            .and_then(|k| {
+                OpenAiCompatible::new(
+                    "nebius",
+                    &cfg.model.nebius_base_url,
+                    &cfg.media.vision_model,
+                    Some(k),
+                    cfg.model.request_timeout_secs,
+                    true,
+                )
+                .ok()
+                .map(|p| Arc::new(p.with_vision(true)) as Arc<dyn ModelProvider>)
+            })
+    };
     Router {
         hosted,
         local,
+        vision,
         mock: Arc::new(MockProvider::new()),
     }
 }
@@ -472,11 +647,7 @@ mod tests {
 
     #[test]
     fn offline_without_local_model_fails_honestly() {
-        let r = Router {
-            hosted: None,
-            local: None,
-            mock: Arc::new(MockProvider::new()),
-        };
+        let r = Router::default();
         let e = match r.select("offline") {
             Ok(_) => panic!("expected offline to fail"),
             Err(e) => e.to_string(),

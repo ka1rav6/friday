@@ -53,6 +53,13 @@ enum Command {
     },
     /// Ask FRIDAY one question and print the answer.
     Ask { prompt: Vec<String> },
+    /// Connect or disconnect an account.
+    Auth {
+        #[command(subcommand)]
+        action: AuthAction,
+    },
+    /// Report which voice, screen and OCR backends this machine has.
+    Media,
 }
 
 #[derive(Subcommand)]
@@ -62,6 +69,19 @@ enum ConfigAction {
     Validate,
     /// Print a commented default config you can save and edit.
     Init,
+}
+
+#[derive(Subcommand)]
+enum AuthAction {
+    /// Grant FRIDAY read-only access to Gmail.
+    Gmail {
+        /// Delete the stored token instead of connecting.
+        #[arg(long)]
+        forget: bool,
+        /// Print the consent URL instead of opening a browser.
+        #[arg(long)]
+        no_open: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -147,6 +167,13 @@ async fn main() -> Result<()> {
             } else {
                 println!("{}", serde_json::to_string_pretty(&defs)?);
             }
+            Ok(())
+        }
+        Command::Auth { action } => auth_cmd(&state, action).await,
+        Command::Media => {
+            let ctx = tools::ToolCtx::root(state.clone(), None);
+            let v = tools::execute(&ctx, "get_media_capabilities", serde_json::json!({})).await;
+            println!("{}", serde_json::to_string_pretty(&v.value)?);
             Ok(())
         }
         Command::Config { action } => config_cmd(&state, action).await,
@@ -291,4 +318,53 @@ fn tools_markdown(defs: &[tools::ToolDefinition]) -> String {
          against the caller's grant, the workspace scope and the current connectivity mode.\n",
     );
     out
+}
+
+async fn auth_cmd(state: &AppState, action: AuthAction) -> Result<()> {
+    match action {
+        AuthAction::Gmail { forget: true, .. } => {
+            let removed = friday::gmail::forget_token()?;
+            println!(
+                "{}",
+                if removed {
+                    "Stored Gmail token deleted. Also revoke FRIDAY at \
+                     https://myaccount.google.com/permissions to invalidate it on Google's side."
+                } else {
+                    "No stored Gmail token to delete."
+                }
+            );
+            state.audit("user", "gmail", "forget_token", "token deleted by user", None).await;
+            Ok(())
+        }
+        AuthAction::Gmail { no_open, .. } => {
+            let cfg = state.cfg().await;
+            let auth = friday::gmail::begin(cfg.briefing.oauth_port).await?;
+
+            println!("FRIDAY is requesting READ-ONLY Gmail access ({}).", friday::gmail::SCOPE);
+            println!("It cannot send, delete or modify mail with this scope.\n");
+            println!("Open this URL and grant access:\n\n  {}\n", auth.url);
+            if !no_open {
+                // Best effort: if no opener exists, the printed URL is the fallback.
+                for opener in ["xdg-open", "open", "start"] {
+                    if friday::media::which(opener).is_some() {
+                        let _ = friday::media::run(opener, &[auth.url.as_str()], 10, None).await;
+                        break;
+                    }
+                }
+            }
+            println!("Waiting for the redirect on 127.0.0.1:{}…", cfg.briefing.oauth_port);
+
+            let token = friday::gmail::complete(
+                auth,
+                &state.http,
+                std::time::Duration::from_secs(300),
+            )
+            .await?;
+            state.audit("user", "gmail", "connected", &format!("scope={}", token.scope), None).await;
+
+            println!("\nConnected. Token stored in {}.", friday::gmail::token_path().display());
+            println!("Set briefing.email_provider = \"gmail\" to use it, then run `friday brief`.");
+            Ok(())
+        }
+    }
 }
