@@ -2,6 +2,11 @@
 //!
 //! The crate is a library so that integration tests can drive the real stack
 //! (database, tool registry, agent loop) rather than a parallel test harness.
+//
+// sqlx's runtime query API returns rows as tuples, so a `SELECT` of several
+// columns is unavoidably a wide tuple type. Naming an alias for each one would
+// add indirection without making the queries clearer.
+#![allow(clippy::type_complexity)]
 pub mod agents;
 pub mod api;
 pub mod briefing;

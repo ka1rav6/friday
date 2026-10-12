@@ -115,16 +115,29 @@ pub async fn fetch_page(state: &AppState, raw_url: &str) -> Result<(String, Stri
     Ok((final_url.to_string(), body))
 }
 
-pub async fn save_report(
-    state: &AppState,
-    title: &str,
-    question: &str,
-    summary: &str,
-    content: &str,
-    sources: &[Source],
-    tags: Value,
-    freshness_days: i64,
-) -> Result<String> {
+/// A report about to be written to the library. Grouped so callers name each
+/// field at the call site instead of passing eight positional arguments.
+pub struct NewReport<'a> {
+    pub title: &'a str,
+    pub question: &'a str,
+    pub summary: &'a str,
+    pub content: &'a str,
+    pub sources: &'a [Source],
+    pub tags: Value,
+    /// Days after which this report should be treated as possibly outdated.
+    pub freshness_days: i64,
+}
+
+pub async fn save_report(state: &AppState, report: NewReport<'_>) -> Result<String> {
+    let NewReport {
+        title,
+        question,
+        summary,
+        content,
+        sources,
+        tags,
+        freshness_days,
+    } = report;
     let id = uid();
     sqlx::query(
         "INSERT INTO research_documents (id,title,question,summary,content,tags,freshness_days,created_at)

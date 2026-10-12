@@ -108,7 +108,7 @@ impl ToolRegistry {
     pub fn schemas_for(&self, allowed: Option<&HashSet<String>>, offline: bool) -> Vec<Value> {
         self.defs()
             .into_iter()
-            .filter(|d| allowed.map_or(true, |a| a.contains(d.name)))
+            .filter(|d| allowed.is_none_or(|a| a.contains(d.name)))
             .filter(|d| !(offline && d.network))
             .map(|d| {
                 json!({"type":"function","function":{

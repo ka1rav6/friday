@@ -348,8 +348,8 @@ pub async fn run_subagent(
     } else {
         spec.allowed_tools
             .iter()
+            .filter(|t| role_default.contains(*t))
             .cloned()
-            .filter(|t| role_default.contains(t))
             .collect()
     };
     if let Some(p) = &parent_allowed {

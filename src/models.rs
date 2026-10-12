@@ -289,6 +289,12 @@ pub struct MockProvider {
     pub scripted: std::sync::Mutex<Vec<ModelResponse>>,
 }
 
+impl Default for MockProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[allow(dead_code)] // scripted responses are used by the agent-loop tests
 impl MockProvider {
     pub fn new() -> Self {

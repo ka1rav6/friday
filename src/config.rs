@@ -365,15 +365,27 @@ mod tests {
 
     #[test]
     fn validate_rejects_bad_values() {
-        let mut c = Config::default();
-        c.mode = "sideways".into();
-        assert!(validate(&c).is_err());
-        let mut c = Config::default();
-        c.agents.hard_max_subagents = 99;
-        assert!(validate(&c).is_err());
-        let mut c = Config::default();
-        c.briefing.at_time = "7h30".into();
-        assert!(validate(&c).is_err());
+        assert!(validate(&Config {
+            mode: "sideways".into(),
+            ..Default::default()
+        })
+        .is_err());
+        assert!(validate(&Config {
+            agents: AgentConfig {
+                hard_max_subagents: 99,
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .is_err());
+        assert!(validate(&Config {
+            briefing: BriefingConfig {
+                at_time: "7h30".into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .is_err());
     }
 
     #[test]

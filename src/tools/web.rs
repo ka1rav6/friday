@@ -109,13 +109,15 @@ async fn save_research_report(ctx: &ToolCtx, a: Value) -> Result<Value> {
     );
     let id = research::save_report(
         &ctx.state,
-        &s(&a, "title")?,
-        &s_opt(&a, "question").unwrap_or_default(),
-        &s_opt(&a, "summary").unwrap_or_default(),
-        &s(&a, "content")?,
-        &sources,
-        a.get("tags").cloned().unwrap_or(json!([])),
-        n(&a, "freshness_days", 180),
+        research::NewReport {
+            title: &s(&a, "title")?,
+            question: &s_opt(&a, "question").unwrap_or_default(),
+            summary: &s_opt(&a, "summary").unwrap_or_default(),
+            content: &s(&a, "content")?,
+            sources: &sources,
+            tags: a.get("tags").cloned().unwrap_or(json!([])),
+            freshness_days: n(&a, "freshness_days", 180),
+        },
     )
     .await?;
     if let Some(t) = &ctx.task_id {
@@ -254,16 +256,20 @@ async fn prepare_offline_packet(ctx: &ToolCtx, a: Value) -> Result<Value> {
     }
     let packet = research::save_report(
         &ctx.state,
-        &format!("Offline packet: {topic}"),
-        &topic,
-        &format!(
-            "Self-contained offline packet covering {} report(s) on {topic}.",
-            reports.len()
-        ),
-        &md,
-        &[],
-        json!(["offline-packet", topic]),
-        365,
+        research::NewReport {
+            title: &format!("Offline packet: {topic}"),
+            question: &topic,
+            summary: &format!(
+                "Self-contained offline packet covering {} report(s) on {topic}.",
+                reports.len()
+            ),
+            content: &md,
+            sources: &[],
+            tags: json!(["offline-packet", topic]),
+            // A packet is a snapshot the user deliberately took, so it is given
+            // a long freshness window; its age is still reported.
+            freshness_days: 365,
+        },
     )
     .await?;
     Ok(

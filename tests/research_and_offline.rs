@@ -17,19 +17,22 @@ async fn library() -> friday::state::AppState {
     let (st, _) = friday::test_state().await.unwrap();
     research::save_report(
         &st,
-        "io_uring vs epoll for high-concurrency servers",
-        "Should a new Rust server use io_uring or epoll?",
-        "io_uring reduces syscall overhead; epoll remains the portable default.",
-        "## Findings\nio_uring batches submissions (src 1). epoll is portable (src 2).\n",
-        &[
-            src("https://www.kernel.org/doc/html/latest/", "Kernel docs"),
-            src(
-                "https://man7.org/linux/man-pages/man7/epoll.7.html",
-                "epoll(7)",
-            ),
-        ],
-        json!(["io_uring", "networking"]),
-        180,
+        research::NewReport {
+            title: "io_uring vs epoll for high-concurrency servers",
+            question: "Should a new Rust server use io_uring or epoll?",
+            summary: "io_uring reduces syscall overhead; epoll remains the portable default.",
+            content:
+                "## Findings\nio_uring batches submissions (src 1). epoll is portable (src 2).\n",
+            sources: &[
+                src("https://www.kernel.org/doc/html/latest/", "Kernel docs"),
+                src(
+                    "https://man7.org/linux/man-pages/man7/epoll.7.html",
+                    "epoll(7)",
+                ),
+            ],
+            tags: json!(["io_uring", "networking"]),
+            freshness_days: 180,
+        },
     )
     .await
     .unwrap();
@@ -143,13 +146,15 @@ async fn stale_reports_are_flagged_by_their_freshness_policy() {
     let (st, _) = friday::test_state().await.unwrap();
     let id = research::save_report(
         &st,
-        "Fast-moving topic",
-        "q",
-        "s",
-        "c",
-        &[src("https://example.com/a", "a")],
-        json!([]),
-        30,
+        research::NewReport {
+            title: "Fast-moving topic",
+            question: "q",
+            summary: "s",
+            content: "c",
+            sources: &[src("https://example.com/a", "a")],
+            tags: json!([]),
+            freshness_days: 30,
+        },
     )
     .await
     .unwrap();
