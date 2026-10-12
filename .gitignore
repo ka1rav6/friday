@@ -228,3 +228,8 @@ frontend/dist/
 
 # Built frontend (regenerate with `npm run build` in frontend/)
 frontend/dist/
+
+# Local instance state: project config written by `PUT /api/config`, and
+# project-scoped skills installed at run time. Generate a starting point with
+# `friday config init > .friday/config.toml`.
+.friday/
