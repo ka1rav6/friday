@@ -218,3 +218,10 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# JARVIS
+data/
+.env
+.secrets/
+frontend/node_modules/
+frontend/dist/
