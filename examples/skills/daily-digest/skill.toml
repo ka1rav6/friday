@@ -1,0 +1,17 @@
+name = "daily-digest"
+version = "0.1.0"
+description = "Summarize open tasks, overdue deadlines and recent project decisions into one short digest."
+source = "local"
+
+# Tools this workflow intends to use. This list is advisory: FRIDAY still
+# enforces your permission settings, so a tool you have disabled stays
+# disabled even though it is declared here.
+declared_tools = [
+    "get_current_time",
+    "list_tasks",
+    "suggest_next_actions",
+    "search_knowledge",
+    "send_notification",
+]
+
+compatibility = "friday>=0.1"
